@@ -62,6 +62,16 @@ func (p *Printer) Linefeed() {
 	p.w.Write([]byte("\n"))
 }
 
+// FormfeedN writes N formfeeds to the printer.
+func (p *Printer) FormfeedN(n int) {
+	p.w.Write([]byte(fmt.Sprintf("\x1Bd%c", n))) // ESC
+}
+
+// Formfeed writes 1 formfeed to the printer.
+func (p *Printer) Formfeed() {
+	p.FormfeedN(1)
+}
+
 func (p *Printer) SendFontSize() {
 	p.w.Write([]byte(fmt.Sprintf("\x1D!%c", ((p.width-1)<<4)|(p.height-1))))
 }
