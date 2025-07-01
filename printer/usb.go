@@ -88,3 +88,16 @@ func (u *usbConn) Close() error {
 	}
 	return nil
 }
+
+func findUSBPrinter(ctx *gousb.Context, vendorID, productID gousb.ID) (*gousb.Device, error) {
+	devs, err := ctx.OpenDevices(func(desc *gousb.DeviceDesc) bool {
+		return desc.Vendor == vendorID && desc.Product == productID
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(devs) == 0 {
+		return nil, fmt.Errorf("USB device %s:%s not found", vendorID, productID)
+	}
+	return devs[0], nil // Возвращаем первое найденное устройство
+}

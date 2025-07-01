@@ -3,10 +3,10 @@ package main
 import (
 	"log"
 
-	"github.com/AlexStarov/printerlib/printer"
+	"github.com/AlexStarov/escpos-GoLang-lib/printer"
 )
 
-func main() {
+func PrintImage() {
 	p, err := printer.NewSerialPrinter("/dev/ttyUSB0", 115200)
 	if err != nil {
 		log.Fatal(err)

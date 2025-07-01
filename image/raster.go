@@ -1,7 +1,7 @@
 package image
 
 import (
-	"github.com/AlexStarov/printerlib/util"
+	"github.com/AlexStarov/escpos-GoLang-lib/util"
 )
 
 const gs8lMaxY = 831 // Ограничение по высоте для GS 8 L режима

@@ -3,10 +3,10 @@ package main
 import (
 	"log"
 
-	"github.com/AlexStarov/printerlib/printer"
+	"github.com/AlexStarov/escpos-GoLang-lib/printer"
 )
 
-func main() {
+func PrintToUSB() {
 	p, err := printer.NewUSBPrinter(0x1234, 0x5678)
 	if err != nil {
 		log.Fatal("USB error: ", err)
