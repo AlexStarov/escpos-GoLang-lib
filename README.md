@@ -1,14 +1,14 @@
-# PrinterLib
+# escpos-GoLang-lib
 
 Библиотека для печати по ESC/POS через USB и Serial порты.
 
 ## Установка
 
 ```bash
-go get github.com/AlexStarov/printerlib
+go get github.com/AlexStarov/escpos-GoLang-lib
 
 ## Дерево проекта
-printerlib/
+escpos-GoLang-lib/
 ├── go.mod
 ├── README.md
 │
