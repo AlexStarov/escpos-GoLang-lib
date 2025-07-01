@@ -36,6 +36,11 @@ func (p *Printer) Init() {
 	p.w.Write([]byte("\x1B@"))
 }
 
+// End terminates the printer session.
+func (p *Printer) End() {
+	p.w.Write([]byte("\xFA"))
+}
+
 func (p *Printer) Reset() {
 	p.width, p.height = 1, 1
 	p.underline, p.emphasize, p.upsidedown, p.rotate = 0, 0, 0, 0
