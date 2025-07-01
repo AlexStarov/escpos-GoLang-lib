@@ -123,3 +123,17 @@ type nopCloser struct {
 func (nopCloser) Close() error {
 	return nil
 }
+
+func (p *Printer) CloseConnection() error {
+	if p.w != nil {
+		if closer, ok := p.w.(io.Closer); ok {
+			return closer.Close()
+		}
+	}
+	return nil
+}
+
+// func (p *Printer) CloseConnection() error {
+// 	// return p.w.(net.Conn).Close()
+// 	return p.w.Close()
+// }
