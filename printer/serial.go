@@ -1,90 +1,84 @@
 package printer
 
 import (
-	"fmt"
-	"log"
-	"time"
+    "fmt"
+    "time"
 
-	"go.bug.st/serial"
+    "go.bug.st/serial"
 
-	logInternal "github.com/AlexStarov/escpos-GoLang-lib/log" // Убедитесь, что пакет image импортирован корректно
+    logInternal "github.com/AlexStarov/escpos-GoLang-lib/log"
 )
 
-// NewSerialPrinter создаёт Printer через последовательный порт (COM или /dev/cu.usbmodem*).
+// NewSerialPrinter создаёт и инициализирует ESC/POS-принтер через последовательный порт.
 func NewSerialPrinter(portName string, baudRate uint64) (*Printer, error) {
-	// Получаем список доступных портов (можно использовать для проверки)
-	ports, err := serial.GetPortsList()
-	if err != nil {
-		logInternal.Errlog.Printf("Ошибка получения списка портов: %v", err)
-		return nil, fmt.Errorf("failed to list serial ports: %w", err)
-	}
-	logInternal.Stdlog.Printf("Доступные порты: %v", ports)
+    // Получаем список доступных COM-портов
+    ports, err := serial.GetPortsList()
+    if err != nil {
+        logInternal.Errlog.Printf("Ошибка получения списка портов: %v", err)
+        return nil, fmt.Errorf("failed to list serial ports: %w", err)
+    }
+    logInternal.Stdlog.Printf("Доступные порты: %v", ports)
 
-	// Проверяем, существует ли заданный порт
-	if !contains(ports, portName) {
-		log.Printf("Порт %s не найден", portName)
-		return nil, fmt.Errorf("serial port %s not found", portName)
-	}
+    // Проверяем, что указанный порт существует
+    if !contains(ports, portName) {
+        logInternal.Errlog.Printf("Порт %s не найден", portName)
+        return nil, fmt.Errorf("serial port %s not found", portName)
+    }
+    logInternal.Stdlog.Printf("Используем порт: %s", portName)
 
-	// Открываем порт с указанной скоростью
-	mode := &serial.Mode{
-		BaudRate: int(baudRate),
-		Parity:   serial.NoParity,
-		DataBits: 8,
-		StopBits: serial.OneStopBit,
-	}
+    // Конфигурируем параметры подключения
+    mode := &serial.Mode{
+        BaudRate: int(baudRate),
+        DataBits: 8,
+        Parity:   serial.NoParity,
+        StopBits: serial.OneStopBit,
+    }
 
-	logInternal.Stdlog.Printf("Пытаемся открыть порт: %s с baudRate: %d", portName, baudRate)
+    // Открываем порт
+    serialPort, err := serial.Open(portName, mode)
+    if err != nil {
+        logInternal.Errlog.Printf("Не удалось открыть порт %s: %v", portName, err)
+        return nil, fmt.Errorf("failed to open serial port %s: %w", portName, err)
+    }
+    logInternal.Stdlog.Printf("Порт %s успешно открыт", portName)
 
-	serialPort, err := serial.Open(portName, mode)
+    // Устанавливаем таймаут чтения
+    serialPort.SetReadTimeout(100 * time.Millisecond)
 
-	logInternal.Stdlog.Printf("Отладка: OpenPort завершился") // <- Отладочный лог
+    // Создаём объект Printer
+    printer, err := NewPrinter(serialPort)
+    if err != nil {
+        serialPort.Close()
+        logInternal.Errlog.Printf("Ошибка инициализации Printer: %v", err)
+        return nil, err
+    }
 
-	if err != nil {
-		log.Printf("Ошибка открытия порта %s: %v", portName, err)
-		return nil, fmt.Errorf("failed to open serial port %s: %w", portName, err)
-	}
-	logInternal.Stdlog.Printf("Порт %s успешно открыт", portName)
-	logInternal.Stdlog.Println(serialPort)
-	serialPort.SetReadTimeout(100 * time.Millisecond) // Устанавливаем таймаут чтения
+    // Отправляем XON для разблокировки приёма
+    if n, err := serialPort.Write([]byte{0x11}); err != nil {
+        logInternal.Errlog.Printf("Не удалось отправить XON: %v", err)
+    } else {
+        logInternal.Stdlog.Printf("Отправлено XON (%d байт)", n)
+    }
 
-	// Создаём объект Printer.
-	printer, err := NewPrinter(serialPort)
-	if err != nil {
-		serialPort.Close()
-		return nil, err
-	}
+    // ESC @ — полная инициализация принтера
+    if n, err := serialPort.Write([]byte{0x1B, 0x40}); err != nil {
+        logInternal.Errlog.Printf("Не удалось отправить ESC @: %v", err)
+    } else {
+        logInternal.Stdlog.Printf("Отправлено ESC @ (%d байт)", n)
+    }
 
-	n, err := serialPort.Write([]byte{0x11}) // XON
-	logInternal.Stdlog.Printf("Отправлено %d байт на принтер: %x", n, []byte{0x11})
+    // Даем принтеру время на завершение инициализации
+    time.Sleep(100 * time.Millisecond)
 
-	if err != nil {
-		log.Printf("Ошибка отправки команды инициализации: %v", err)
-	}
-
-	_, err = serialPort.Write([]byte{0x1B, 0x40}) // ESC @ (инициализация)
-	if err != nil {
-		log.Printf("Ошибка отправки команды инициализации: %v", err)
-	}
-	logInternal.Stdlog.Printf("Отправлено %d байт на принтер: %x", n, []byte{0x1B, 0x40})
-
-	_, err = serialPort.Write([]byte{0x1B, 0x21, 0x00}) // Установка обычного текста
-	_, err = serialPort.Write([]byte("TEST PRINT\n"))
-	// serialPort.Write([]byte("01234567890\n")) // Отправляем строку для инициализации
-
-	printer.Init()
-	printer.Reset()
-	printer.Write([]byte("1234567890\n")) // ESC @ (Initialize printer)
-	time.Sleep(100 * time.Millisecond)    // Даем время на инициализацию
-	return printer, nil
+    return printer, nil
 }
 
-// Проверяем, есть ли порт в списке
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
+// contains проверяет наличие элемента item в срезе list
+func contains(list []string, item string) bool {
+    for _, entry := range list {
+        if entry == item {
+            return true
+        }
+    }
+    return false
 }
