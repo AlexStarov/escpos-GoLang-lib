@@ -3,7 +3,6 @@ package printer
 import (
 	"errors"
 	"fmt"
-	"io"
 
 	"github.com/google/gousb"
 )
@@ -19,14 +18,14 @@ type usbConn struct {
 	in   *gousb.InEndpoint // Может быть nil, если чтение не требуется
 }
 
-// nopCloser оборачивает io.ReadWriter и реализует метод Close(), который ничего не делает.
-type nopCloser struct {
-	io.ReadWriter
-}
+// // nopCloser оборачивает io.ReadWriter и реализует метод Close(), который ничего не делает.
+// type nopCloser struct {
+// 	io.ReadWriter
+// }
 
-func (nopCloser) Close() error {
-	return nil
-}
+// func (nopCloser) Close() error {
+// 	return nil
+// }
 
 // NewUSBPrinter создаёт Printer через USB, принимая vendorID и productID.
 // Он настраивает USB-соединение и возвращает Printer, которому "безразлично"
