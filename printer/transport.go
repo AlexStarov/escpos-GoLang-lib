@@ -136,6 +136,37 @@ func (l *LPDTransport) flushJob() error {
 	return nil
 }
 
+func (l *LPDTransport) GetStatus() (string, error) {
+	host, port, err := net.SplitHostPort(l.conn.RemoteAddr().String())
+	if err != nil {
+		return "", fmt.Errorf("error parsing remote address: %w", err)
+	}
+
+	// Открываем новое соединение для запроса статуса
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 3*time.Second)
+	if err != nil {
+		return "", fmt.Errorf("error connecting to LPD for status: %w", err)
+	}
+	defer conn.Close()
+
+	// \x04 — long status
+	cmd := fmt.Sprintf("\x04%s\n", l.queue)
+	if _, err := conn.Write([]byte(cmd)); err != nil {
+		return "", fmt.Errorf("error sending status command to LPD: %w", err)
+	}
+
+	buf, err := io.ReadAll(conn)
+	if err != nil {
+		return "", fmt.Errorf("error reading status from LPD: %w", err)
+	}
+
+	status := strings.TrimSpace(string(buf))
+	if status == "" {
+		status = "LPD did not return any status"
+	}
+	return status, nil
+}
+
 // -------------------- LPD helpers --------------------
 
 func requestPrintJob(conn net.Conn, queue string) error {
