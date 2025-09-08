@@ -112,24 +112,24 @@ func (l *LPDTransport) flushJob() error {
 		host, user, jobName, dfName, dfName,
 	)
 
-	log.Printf("[DEBUG] Этап 1: requestPrintJob")
+	log.Printf("[DEBUG] Stage 1: requestPrintJob")
 	if err := requestPrintJob(l.conn, l.queue); err != nil {
-		return fmt.Errorf("LPD: этап 1 failed: %w", err)
+		return fmt.Errorf("LPD: stage 1 failed: %w", err)
 	}
 
-	log.Printf("[DEBUG] Этап 2: sendControlFile")
+	log.Printf("[DEBUG] Stage 2: sendControlFile")
 	if err := sendControlFile(l.conn, l.queue, cfName, []byte(control)); err != nil {
-		return fmt.Errorf("LPD: этап 2 failed: %w", err)
+		return fmt.Errorf("LPD: stage 2 failed: %w", err)
 	}
 
 	// Этап 3: файл данных (точный размер из буфера)
 	data := l.jobBuf.Bytes()
-	log.Printf("[DEBUG] Этап 3: sendDataFile (len=%d)", len(data))
+	log.Printf("[DEBUG] Stage 3: sendDataFile (len=%d)", len(data))
 	if err := sendDataFile(l.conn, l.queue, dfName, data); err != nil {
-		return fmt.Errorf("LPD: этап 3 failed: %w", err)
+		return fmt.Errorf("LPD: stage 3 failed: %w", err)
 	}
 
-	log.Printf("[DEBUG] Все этапы LPD завершены успешно")
+	log.Printf("[DEBUG] All stages LPD finished successfully")
 
 	// Успех — очистим буфер
 	l.jobBuf.Reset()
@@ -140,6 +140,8 @@ func (l *LPDTransport) flushJob() error {
 
 func requestPrintJob(conn net.Conn, queue string) error {
 	// \x02 + <queue>\n
+	log.Printf("[DEBUG] requestPrintJob: conn=%v", conn)
+	log.Printf("[DEBUG] requestPrintJob: queue=%q", queue)
 	if err := writeAll(conn, []byte{0x02}); err != nil {
 		return err
 	}
@@ -190,14 +192,14 @@ func readAck(conn net.Conn, stage string) error {
 	defer conn.SetReadDeadline(time.Time{})
 
 	ack := make([]byte, 1)
-	log.Printf("[DEBUG] Ожидаем ACK (%s)...", stage)
+	log.Printf("[DEBUG] Waiting for ACK (%s)...", stage)
 	n, err := conn.Read(ack)
 	if err != nil {
-		return fmt.Errorf("ошибка чтения ACK (%s): %v", stage, err)
+		return fmt.Errorf("ERROR reading ACK on %s: %w", stage, err)
 	}
-	log.Printf("[DEBUG] Получен ACK (%s): % X (n=%d)", stage, ack, n)
+	log.Printf("[DEBUG] Received ACK byte: 0x%02x (n=%d) on %s", ack[0], n, stage)
 	if n != 1 || ack[0] != 0x00 {
-		return fmt.Errorf("LPD отказал на %s", stage)
+		return fmt.Errorf("LPD request not acknowledged on %s", stage)
 	}
 	return nil
 }
