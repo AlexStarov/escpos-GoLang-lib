@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -211,7 +210,7 @@ func (p *Printer) SetAlign(align string) {
 	case "right":
 		a = 2
 	default:
-		log.Printf("Invalid alignment: %s\n", align)
+		logInternal.Errlog.Printf("Invalid alignment: %s\n", align)
 	}
 	p.t.Write([]byte(fmt.Sprintf("\x1Ba%c", a)))
 }
@@ -278,13 +277,13 @@ func (p *Printer) Image(params map[string]string, data string) error {
 	// get width
 	wstr, ok := params["width"]
 	if !ok {
-		log.Println("No width specified on image")
+		logInternal.Errlog.Println("No width specified on image")
 	}
 
 	// get height
 	hstr, ok := params["height"]
 	if !ok {
-		log.Println("No height specified on image")
+		logInternal.Errlog.Println("No height specified on image")
 	}
 
 	// convert width
@@ -305,7 +304,7 @@ func (p *Printer) Image(params map[string]string, data string) error {
 		return err
 	}
 
-	log.Printf("Image len:%d w: %d h: %d\n", len(dec), width, height)
+	logInternal.Errlog.Printf("Image len:%d w: %d h: %d\n", len(dec), width, height)
 
 	header := []byte{
 		byte('0'), 0x01, 0x01, byte('1'),
@@ -328,7 +327,7 @@ func (p *Printer) WriteNode(name string, params map[string]string, data string) 
 		}
 		cstr = fmt.Sprintf(" => '%s'", str)
 	}
-	log.Printf("Write: %s => %+v%s\n", name, params, cstr)
+	logInternal.Errlog.Printf("Write: %s => %+v%s\n", name, params, cstr)
 
 	switch name {
 	case "feed":
