@@ -39,9 +39,9 @@ func NewPrinter(w io.ReadWriter) (*Printer, error) {
 
 	if conn, ok := w.(net.Conn); ok {
 		addr := conn.RemoteAddr().String()
-		// Определяем LPD по целевому порту 515
+
 		if strings.HasSuffix(addr, ":515") {
-			transport = &LPDTransport{conn: conn, queue: "raw"}
+			transport = NewLPDTransport(conn, "lp")
 		} else {
 			transport = &RawTransport{conn: conn}
 		}

@@ -1,24 +1,27 @@
 package printer
 
 import (
-    "bytes"
-    "fmt"
-    "io"
-    "net"
-    "os"
-    "strings"
-    "sync"
-    "time"
+	"bytes"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 )
 
 type Transport interface {
-    Write([]byte) (int, error)
-    Read([]byte) (int, error)
-    Close() error
+	Write([]byte) (int, error)
+	Read([]byte) (int, error)
+	Close() error
 }
 
+// -------------------- RAW --------------------
+
 type RawTransport struct {
-    conn io.ReadWriteCloser
+	conn io.ReadWriteCloser
 }
 
 func (r *RawTransport) Write(b []byte) (int, error) { return r.conn.Write(b) }
@@ -26,152 +29,183 @@ func (r *RawTransport) Read(b []byte) (int, error)  { return r.conn.Read(b) }
 func (r *RawTransport) Close() error                { return r.conn.Close() }
 
 type LPDTransport struct {
-    conn   net.Conn
-    queue  string
-    jobBuf bytes.Buffer
-    closed bool
-    mu     sync.Mutex
+	conn   net.Conn
+	queue  string
+	jobBuf bytes.Buffer
+	closed bool
+	mu     sync.Mutex
+}
+
+func NewLPDTransport(conn net.Conn, queue string) *LPDTransport {
+	if queue == "" {
+		queue = "lp"
+	}
+	return &LPDTransport{
+		conn:  conn,
+		queue: queue,
+	}
 }
 
 func (l *LPDTransport) Write(data []byte) (int, error) {
-    l.mu.Lock()
-    defer l.mu.Unlock()
-    if l.closed {
-        return 0, io.ErrClosedPipe
-    }
-    return l.jobBuf.Write(data)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return 0, io.ErrClosedPipe
+	}
+	return l.jobBuf.Write(data)
 }
 
 func (l *LPDTransport) Read(b []byte) (int, error) {
-    return l.conn.Read(b)
+	return l.conn.Read(b)
 }
 
 func (l *LPDTransport) Close() error {
-    l.mu.Lock()
-    defer l.mu.Unlock()
-    if l.closed {
-        return nil
-    }
-    if err := l.flushJob(); err != nil {
-        _ = l.conn.Close()
-        l.closed = true
-        return err
-    }
-    err := l.conn.Close()
-    l.closed = true
-    return err
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return nil
+	}
+	defer func() { l.closed = true }()
+
+	if l.jobBuf.Len() == 0 {
+		return l.conn.Close()
+	}
+
+	if err := l.flushJob(); err != nil {
+		_ = l.conn.Close()
+		return err
+	}
+
+	return l.conn.Close()
 }
 
 func (l *LPDTransport) flushJob() error {
-    if l.jobBuf.Len() == 0 {
-        return nil
-    }
+	host, _ := os.Hostname()
+	if host == "" {
+		host = "localhost"
+	}
+	user := os.Getenv("USER")
+	if user == "" {
+		user = "GoLang"
+	}
 
-    queue := l.queue
-    if queue == "" {
-        queue = "raw"
-    }
+	jobID := int(time.Now().UnixNano() % 1000000)
+	hostShort := host
+	if i := strings.IndexByte(hostShort, '.'); i > 0 {
+		hostShort = hostShort[:i]
+	}
+	jobName := fmt.Sprintf("escpos-%d", jobID)
+	cfName := fmt.Sprintf("cfA%03d%s", jobID%1000, hostShort)
+	dfName := fmt.Sprintf("dfA%03d%s", jobID%1000, hostShort)
 
-    host, _ := os.Hostname()
-    if host == "" {
-        host = "localhost"
-    }
-    user := os.Getenv("USER")
-    if user == "" {
-        user = "golang"
-    }
+	// Минимально корректный control file
+	// H - host, P - user, J - job name, N - original file name, U - data file to print
+	control := fmt.Sprintf(
+		"H%s\nP%s\nJ%s\nN%s\nU%s\n",
+		host, user, jobName, dfName, dfName,
+	)
 
-    jobID := int(time.Now().UnixNano() % 1000000)
-    hostShort := host
-    if i := strings.IndexByte(hostShort, '.'); i > 0 {
-        hostShort = hostShort[:i]
-    }
-    jobName := fmt.Sprintf("escpos-%d", jobID)
-    cfName := fmt.Sprintf("cfA%03d%s", jobID%1000, hostShort)
-    dfName := fmt.Sprintf("dfA%03d%s", jobID%1000, hostShort)
+	// Этап 1: начало приёма задания
+	if err := requestPrintJob(l.conn, l.queue); err != nil {
+		return fmt.Errorf("LPD: stage 1 (request job) failed: %w", err)
+	}
 
-    control := fmt.Sprintf(
-        "H%s\nP%s\nJ%s\nN%s\nl%s\n",
-        host, user, jobName, dfName, dfName,
-    )
+	// Этап 2: управляющий файл
+	if err := sendControlFile(l.conn, l.queue, cfName, []byte(control)); err != nil {
+		return fmt.Errorf("LPD: stage 2 (control file) failed: %w", err)
+	}
 
-    if err := l.writeAll([]byte{0x02}); err != nil {
-        return err
-    }
-    if err := l.writeAll([]byte(queue + "\n")); err != nil {
-        return err
-    }
-    if err := l.expectACK(); err != nil {
-        return fmt.Errorf("LPD no ACK on initial job start: %w", err)
-    }
+	// Этап 3: файл данных (точный размер из буфера)
+	data := l.jobBuf.Bytes()
+	if err := sendDataFile(l.conn, l.queue, dfName, data); err != nil {
+		return fmt.Errorf("LPD: stage 3 (data file) failed: %w", err)
+	}
 
-    if err := l.writeAll([]byte{0x02}); err != nil {
-        return err
-    }
-    ctrlHeader := fmt.Sprintf("%d %s\n", len(control), cfName)
-    if err := l.writeAll([]byte(ctrlHeader)); err != nil {
-        return err
-    }
-    if err := l.writeAll([]byte(control)); err != nil {
-        return err
-    }
-    if err := l.writeAll([]byte{0x00}); err != nil {
-        return err
-    }
-    if err := l.expectACK(); err != nil {
-        return fmt.Errorf("LPD no ACK after control file: %w", err)
-    }
-
-    data := l.jobBuf.Bytes()
-    if err := l.writeAll([]byte{0x03}); err != nil {
-        return err
-    }
-    dataHeader := fmt.Sprintf("%d %s\n", len(data), dfName)
-    if err := l.writeAll([]byte(dataHeader)); err != nil {
-        return err
-    }
-    if err := l.writeAll(data); err != nil {
-        return err
-    }
-    if err := l.writeAll([]byte{0x00}); err != nil {
-        return err
-    }
-    if err := l.expectACK(); err != nil {
-        return fmt.Errorf("LPD no ACK after data file: %w", err)
-    }
-
-    l.jobBuf.Reset()
-    return nil
+	// Успех — очистим буфер
+	l.jobBuf.Reset()
+	return nil
 }
 
-func (l *LPDTransport) writeAll(b []byte) error {
-    total := 0
-    for total < len(b) {
-        n, err := l.conn.Write(b[total:])
-        if err != nil {
-            return err
-        }
-        total += n
-    }
-    return nil
+// -------------------- LPD helpers --------------------
+
+func requestPrintJob(conn net.Conn, queue string) error {
+	// \x02 + <queue>\n
+	if err := writeAll(conn, []byte{0x02}); err != nil {
+		return err
+	}
+	if err := writeAll(conn, []byte(queue+"\n")); err != nil {
+		return err
+	}
+	return readAck(conn, "stage 1")
 }
 
-func (l *LPDTransport) expectACK() error {
-    _ = l.conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-    defer l.conn.SetReadDeadline(time.Time{})
-    buf := []byte{0}
-    n, err := l.conn.Read(buf)
-    if err != nil {
-        return err
-    }
-    if n != 1 || buf[0] != 0x00 {
-        return fmt.Errorf("unexpected ACK byte: %v (n=%d)", buf[0], n)
-    }
-    return nil
+func sendControlFile(conn net.Conn, queue, cfName string, control []byte) error {
+	// \x02 + "<size> <cfName>\n" + <control> + \x00
+	if err := writeAll(conn, []byte{0x02}); err != nil {
+		return err
+	}
+	header := []byte(strconv.Itoa(len(control)) + " " + cfName + "\n")
+	if err := writeAll(conn, header); err != nil {
+		return err
+	}
+	if err := writeAll(conn, control); err != nil {
+		return err
+	}
+	if err := writeAll(conn, []byte{0x00}); err != nil {
+		return err
+	}
+	return readAck(conn, "stage 2")
 }
+
+func sendDataFile(conn net.Conn, queue, dfName string, data []byte) error {
+	// \x03 + "<size> <dfName>\n" + <data> + \x00
+	if err := writeAll(conn, []byte{0x03}); err != nil {
+		return err
+	}
+	header := []byte(strconv.Itoa(len(data)) + " " + dfName + "\n")
+	if err := writeAll(conn, header); err != nil {
+		return err
+	}
+	if err := writeAll(conn, data); err != nil {
+		return err
+	}
+	if err := writeAll(conn, []byte{0x00}); err != nil {
+		return err
+	}
+	return readAck(conn, "stage 3")
+}
+
+func readAck(conn net.Conn, stage string) error {
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	defer conn.SetReadDeadline(time.Time{})
+
+	var one [1]byte
+	n, err := conn.Read(one[:])
+	if err != nil {
+		return fmt.Errorf("ошибка чтения ACK (%s): %w", stage, err)
+	}
+	if n != 1 || one[0] != 0x00 {
+		return fmt.Errorf("неожиданный ACK байт (%s): 0x%02X (n=%d)", stage, one[0], n)
+	}
+	return nil
+}
+
+func writeAll(conn net.Conn, b []byte) error {
+	sent := 0
+	for sent < len(b) {
+		n, err := conn.Write(b[sent:])
+		if err != nil {
+			return err
+		}
+		sent += n
+	}
+	return nil
+}
+
+// -------------------- helpers --------------------
 
 type nopCloser struct {
-    io.ReadWriter
+	io.ReadWriter
 }
 
 func (n nopCloser) Close() error { return nil }
