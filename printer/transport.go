@@ -118,9 +118,10 @@ func (l *LPDTransport) flushJob() error {
 
 	// Минимально корректный control file
 	// H - host, P - user, J - job name, N - original file name, U - data file to print
+	// Это ключевой момент: l говорит LPD‑серверу — «печатай этот файл как есть, без фильтрации».
 	control := fmt.Sprintf(
-		"H%s\nP%s\nJ%s\nN%s\nU%s\n",
-		host, user, jobName, dfName, dfName,
+		"H%s\nP%s\nJ%s\nN%s\nU%s\nl%s\n",
+		host, user, jobName, dfName, dfName, dfName,
 	)
 
 	log.Printf("[DEBUG] Stage 1: requestPrintJob")
