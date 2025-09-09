@@ -48,6 +48,7 @@ func NewLPDTransport(conn net.Conn, queue string) *LPDTransport {
 }
 
 func (l *LPDTransport) Write(data []byte) (int, error) {
+	log.Printf("[DEBUG] Write called: % X", data)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.closed {
