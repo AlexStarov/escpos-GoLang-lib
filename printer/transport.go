@@ -48,13 +48,23 @@ func NewLPDTransport(conn net.Conn, queue string) *LPDTransport {
 }
 
 func (l *LPDTransport) Write(data []byte) (int, error) {
-	log.Printf("[DEBUG] Write called: % X", data)
+
+	if len(data) > 100 {
+		first := fmt.Sprintf("% X", data[:50])
+		last := fmt.Sprintf("% X", data[len(data)-50:])
+		log.Printf("[DEBUG] Write called:\n%s\n...\n%s", first, last)
+	} else {
+		log.Printf("[DEBUG] Write called: % X", data)
+	}
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.closed {
 		return 0, io.ErrClosedPipe
 	}
-	return l.jobBuf.Write(data)
+	n, err := l.jobBuf.Write(data)
+	log.Printf("[DEBUG] jobBuf.Len() now = %d", l.jobBuf.Len())
+	return n, err
 }
 
 func (l *LPDTransport) Read(b []byte) (int, error) {
