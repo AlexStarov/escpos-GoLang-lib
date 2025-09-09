@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -34,27 +35,31 @@ type Printer struct {
 }
 
 func NewPrinter(w io.ReadWriter) (*Printer, error) {
-	var transport Transport
+    var transport Transport
 
-	if conn, ok := w.(net.Conn); ok {
-		addr := conn.RemoteAddr().String()
+    // Если нам дали сетевое соединение — проверим порт
+    if conn, ok := w.(net.Conn); ok {
+        addr := conn.RemoteAddr().String()
+        // LPD соединение (порт 515): используем буферизованный LPDTransport
+        if strings.HasSuffix(addr, ":515") {
+            transport = NewLPDTransport(conn, "lp")
+        } else {
+            // Любой другой порт — просто raw passthrough
+            transport = &RawTransport{conn: conn}
+        }
+    } else if rc, ok := w.(io.ReadWriteCloser); ok {
+        // Не сетевой conn — трактуем как RAW
+        transport = &RawTransport{conn: rc}
+    } else {
+        // Любой io.ReadWriter (например, bytes.Buffer) — оборачиваем в nopCloser и RAW
+        transport = &RawTransport{conn: nopCloser{w}}
+    }
 
-		if strings.HasSuffix(addr, ":515") {
-			transport = NewLPDTransport(conn, "lp")
-		} else {
-			transport = &RawTransport{conn: conn}
-		}
-	} else if rc, ok := w.(io.ReadWriteCloser); ok {
-		transport = &RawTransport{conn: rc}
-	} else {
-		transport = &RawTransport{conn: nopCloser{w}}
-	}
-
-	return &Printer{
-		t:      transport,
-		width:  1,
-		height: 1,
-	}, nil
+    return &Printer{
+        t:      transport,
+        width:  1,
+        height: 1,
+    }, nil
 }
 
 func (p *Printer) ReadStatus() bool {
@@ -210,7 +215,7 @@ func (p *Printer) SetAlign(align string) {
 	case "right":
 		a = 2
 	default:
-		logInternal.Errlog.Printf("Invalid alignment: %s\n", align)
+		log.Printf("Invalid alignment: %s\n", align)
 	}
 	p.t.Write([]byte(fmt.Sprintf("\x1Ba%c", a)))
 }
@@ -277,13 +282,13 @@ func (p *Printer) Image(params map[string]string, data string) error {
 	// get width
 	wstr, ok := params["width"]
 	if !ok {
-		logInternal.Errlog.Println("No width specified on image")
+		log.Println("No width specified on image")
 	}
 
 	// get height
 	hstr, ok := params["height"]
 	if !ok {
-		logInternal.Errlog.Println("No height specified on image")
+		log.Println("No height specified on image")
 	}
 
 	// convert width
@@ -304,7 +309,7 @@ func (p *Printer) Image(params map[string]string, data string) error {
 		return err
 	}
 
-	logInternal.Errlog.Printf("Image len:%d w: %d h: %d\n", len(dec), width, height)
+	log.Printf("Image len:%d w: %d h: %d\n", len(dec), width, height)
 
 	header := []byte{
 		byte('0'), 0x01, 0x01, byte('1'),
@@ -327,7 +332,7 @@ func (p *Printer) WriteNode(name string, params map[string]string, data string) 
 		}
 		cstr = fmt.Sprintf(" => '%s'", str)
 	}
-	logInternal.Errlog.Printf("Write: %s => %+v%s\n", name, params, cstr)
+	log.Printf("Write: %s => %+v%s\n", name, params, cstr)
 
 	switch name {
 	case "feed":
