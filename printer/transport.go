@@ -130,7 +130,7 @@ func (l *LPDTransport) flushJob() error {
 	}
 
 	log.Printf("[DEBUG] Stage 2: sendControlFile")
-	if err := sendControlFile(l.conn, l.queue, cfName, []byte(control)); err != nil {
+	if err := sendControlFile(l.conn, cfName, []byte(control)); err != nil {
 		return fmt.Errorf("LPD: stage 2 failed: %w", err)
 	}
 
@@ -163,8 +163,8 @@ func requestPrintJob(conn net.Conn, queue string) error {
 	return readAck(conn, "stage 1")
 }
 
-func sendControlFile(conn net.Conn, queue, cfName string, control []byte) error {
-	// \x02 + "<size> <cfName>\n" + <control> + \x00
+func sendControlFile(conn net.Conn, cfName string, control []byte) error {
+	// 0x02 + "<size> <cfName>\n"
 	if err := writeAll(conn, []byte{0x02}); err != nil {
 		return err
 	}
@@ -172,17 +172,26 @@ func sendControlFile(conn net.Conn, queue, cfName string, control []byte) error 
 	if err := writeAll(conn, header); err != nil {
 		return err
 	}
+
+	// ACK #1 — сервер готов принять тело
+	if err := readAck(conn, "stage 2 (header)"); err != nil {
+		return err
+	}
+
+	// Тело + \x00
 	if err := writeAll(conn, control); err != nil {
 		return err
 	}
 	if err := writeAll(conn, []byte{0x00}); err != nil {
 		return err
 	}
-	return readAck(conn, "stage 2")
+
+	// ACK #2 — сервер принял файл
+	return readAck(conn, "stage 2 (body)")
 }
 
 func sendDataFile(conn net.Conn, queue, dfName string, data []byte) error {
-	// \x03 + "<size> <dfName>\n" + <data> + \x00
+	// 0x03 + "<size> <dfName>\n"
 	if err := writeAll(conn, []byte{0x03}); err != nil {
 		return err
 	}
@@ -190,13 +199,22 @@ func sendDataFile(conn net.Conn, queue, dfName string, data []byte) error {
 	if err := writeAll(conn, header); err != nil {
 		return err
 	}
+
+	// ACK #1 — сервер готов принять тело
+	if err := readAck(conn, "stage 3 (header)"); err != nil {
+		return err
+	}
+
+	// Тело + \x00
 	if err := writeAll(conn, data); err != nil {
 		return err
 	}
 	if err := writeAll(conn, []byte{0x00}); err != nil {
 		return err
 	}
-	return readAck(conn, "stage 3")
+
+	// ACK #2 — сервер принял файл
+	return readAck(conn, "stage 3 (body)")
 }
 
 func readAck(conn net.Conn, stage string) error {
